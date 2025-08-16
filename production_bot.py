@@ -392,4 +392,28 @@ from flask import Flask
 
 # Create the bot instance to get the Flask app
 bot_instance = ProductionBookmarkBot()
-# ... rest of the code
+# Get the Flask app from the web server (we need to modify start_web_server to return it)
+# For now, let's create a simple Flask app
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return """
+    <html>
+    <head><title>AI Bookmark Bot</title></head>
+    <body style="font-family: system-ui; text-align: center; padding: 50px;">
+        <h1>🤖 AI Bookmark Summarizer</h1>
+        <p>Get smart summaries of your Twitter bookmarks!</p>
+        <p><a href="https://t.me/YourBotUsername">Start on Telegram →</a></p>
+    </body>
+    </html>
+    """
+
+# Start the Telegram bot in a background thread when imported by Gunicorn
+if __name__ != "__main__":
+    import threading
+    def start_bot():
+        bot_instance.start_bot()
+    
+    threading.Thread(target=start_bot, daemon=True).start()
+
