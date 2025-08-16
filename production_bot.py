@@ -15,6 +15,26 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from flask import Flask, request, redirect
 import logging
 
+# Create Flask app at module level for Gunicorn
+app = Flask(__name__)
+bot_instance = None  # Will be set later
+
+@app.route('/')
+def home():
+    return """
+    <h1>🤖 AI Bookmark Summarizer Bot</h1>
+    <p>Get smart summaries of your Twitter bookmarks!</p>
+    <p><a href="https://t.me/YourBotUsername">Start on Telegram →</a></p>
+    """
+
+@app.route('/auth/<user_id>')
+def start_auth(user_id):
+    """Initiate OAuth for specific user"""
+    # Copy your existing start_auth logic here, but use bot_instance instead of self
+    session_id = str(uuid.uuid4())
+    bot_instance.pending_auth[session_id] = user_id
+    # ... rest of your existing OAuth logic
+
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
