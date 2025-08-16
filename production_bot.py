@@ -404,3 +404,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+else:
+    # When imported by Gunicorn, set the bot instance and start Telegram bot
+    bot_instance = ProductionBookmarkBot()
+    import threading
+    threading.Thread(target=bot_instance.start_bot, daemon=True).start()
