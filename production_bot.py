@@ -4,14 +4,10 @@ import hashlib
 import base64
 import secrets
 import json
-import asyncio
-import threading
 import uuid
 from datetime import datetime, timedelta
 from urllib.parse import parse_qs, urlparse, urlencode
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes
 from flask import Flask, request, redirect
 import logging
 
@@ -28,9 +24,6 @@ class ProductionBookmarkBot:
     def __init__(self):
         # Bot credentials
         self.telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
-        # DEBUG: Print environment variables
-        print(f"DEBUG: TELEGRAM_BOT_TOKEN = {self.telegram_token}")
-        print(f"DEBUG: Available env vars: {list(os.environ.keys())}")
         self.client_id = os.getenv('X_CLIENT_ID') 
         self.client_secret = os.getenv('X_CLIENT_SECRET')
         self.anthropic_api_key = os.getenv('ANTHROPIC_API_KEY')
@@ -70,14 +63,13 @@ class ProductionBookmarkBot:
             logger.error(f"Token exchange error: {e}")
             return None
     
-    async def send_telegram_message(self, user_id, message):
-        """Send message to specific user"""
+    def send_telegram_message(self, user_id, message):
+        """Send message to specific user (synchronous)"""
         try:
             url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
             data = {
                 'chat_id': user_id,
-                'text': message,
-                'parse_mode': 'Markdown'
+                'text': message
             }
             response = requests.post(url, json=data)
             return response.status_code == 200
@@ -174,108 +166,6 @@ Format as a helpful briefing."""
         except Exception as e:
             logger.warning(f"Anthropic API error: {e}")
             return "📚 Recent bookmarks found, but AI summary unavailable."
-    
-    async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /start command"""
-        user_id = update.effective_user.id
-        
-        if user_id in self.user_tokens:
-            # User already connected
-            await update.message.reply_text(
-                "🎉 You're already connected!\n\n"
-                "📚 Use /bookmarks to get AI summaries\n"
-                "🔄 Use /disconnect to unlink your account"
-            )
-            return
-        
-        # Show connect button
-        connect_url = f"{self.domain}/auth/{user_id}"
-        keyboard = [[InlineKeyboardButton("🔗 Connect Twitter", url=connect_url)]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(
-            "🤖 **AI Bookmark Summarizer**\n\n"
-            "📚 Get smart summaries of your Twitter bookmarks\n"
-            "🧠 Powered by Claude AI\n"
-            "⚡ Instant analysis of your saved tweets\n\n"
-            "👆 Click below to connect your Twitter account\n"
-            "🔒 Secure OAuth - takes 10 seconds",
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
-    
-    async def bookmarks_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /bookmarks command"""
-        user_id = update.effective_user.id
-        
-        if user_id not in self.user_tokens:
-            await self.start_command(update, context)
-            return
-        
-        await update.message.reply_text("📚 Fetching your recent bookmarks...")
-        
-        # Get user's tokens
-        user_data = self.user_tokens[user_id]
-        access_token = user_data['access_token']
-        
-        # Fetch bookmarks
-        result = self.get_user_bookmarks(access_token, max_count=5)
-        
-        if result[0] is None:
-            await update.message.reply_text(f"❌ {result[1]}")
-            return
-        
-        bookmarks, users = result
-        
-        if not bookmarks:
-            await update.message.reply_text("📚 No recent bookmarks found!")
-            return
-        
-        # Generate AI summary
-        summary = self.generate_ai_summary(bookmarks, users)
-        
-        # Send results
-        await update.message.reply_text(
-            f"📚 **Your Recent Bookmarks ({len(bookmarks)} found)**\n\n"
-            f"🤖 **AI Summary:**\n{summary}",
-            parse_mode='Markdown'
-        )
-    
-    async def disconnect_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /disconnect command"""
-        user_id = update.effective_user.id
-        
-        if user_id in self.user_tokens:
-            del self.user_tokens[user_id]
-            await update.message.reply_text(
-                "🔓 Disconnected successfully!\n\n"
-                "Use /start to reconnect anytime"
-            )
-        else:
-            await update.message.reply_text("❌ You're not connected")
-    
-    def start_bot(self):
-        """Start the Telegram bot"""
-        if not self.telegram_token:
-            logger.error("Missing TELEGRAM_BOT_TOKEN")
-            return
-        
-        logger.info("🤖 Starting Production Bookmark Bot...")
-        
-        # Create application
-        telegram_app = Application.builder().token(self.telegram_token).build()
-        
-        # Add handlers
-        telegram_app.add_handler(CommandHandler("start", self.start_command))
-        telegram_app.add_handler(CommandHandler("bookmarks", self.bookmarks_command))
-        telegram_app.add_handler(CommandHandler("disconnect", self.disconnect_command))
-        
-        logger.info("✅ Bot started successfully!")
-        logger.info(f"🌐 Web server: {self.domain}")
-        logger.info(f"🧠 AI: {'✅ Enabled' if self.anthropic_api_key else '❌ Disabled'}")
-        
-        # Start polling
-        telegram_app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 # Create bot instance at module level
 bot_instance = ProductionBookmarkBot()
@@ -350,16 +240,10 @@ def oauth_callback():
             'created_at': datetime.utcnow().isoformat()
         }
         
-        # Send success message to user (using requests instead of asyncio for simplicity)
-        try:
-            url = f"https://api.telegram.org/bot{bot_instance.telegram_token}/sendMessage"
-            data = {
-                'chat_id': telegram_user_id,
-                'text': "✅ Twitter connected successfully!\n\n🎉 You're all set! Use /bookmarks to get AI summaries of your bookmarks."
-            }
-            requests.post(url, json=data)
-        except Exception as e:
-            logger.error(f"Failed to send success message: {e}")
+        # Send success message to user
+        bot_instance.send_telegram_message(telegram_user_id, 
+            "✅ Twitter connected successfully!\n\n🎉 You're all set! Use /bookmarks to get AI summaries of your bookmarks."
+        )
         
         # Cleanup
         del bot_instance.pending_auth[session_id]
@@ -379,22 +263,32 @@ def oauth_callback():
     else:
         return "❌ Failed to exchange authorization code"
 
-def main():
-    bot_instance.start_bot()
-
-# Start Telegram bot in background when imported by Gunicorn
-if __name__ != "__main__":
-    import threading
-    import asyncio
+@app.route('/bookmarks/<user_id>')
+def get_bookmarks_api(user_id):
+    """API endpoint for getting bookmarks (for webhook-based bot)"""
+    if user_id not in bot_instance.user_tokens:
+        return {"error": "User not authenticated"}, 401
     
-    def start_bot():
-        # Create new event loop for this thread
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        bot_instance.start_bot()
+    user_data = bot_instance.user_tokens[user_id]
+    access_token = user_data['access_token']
     
-    threading.Thread(target=start_bot, daemon=True).start()
-    logger.info("🚀 Started Telegram bot in background thread for Gunicorn")
+    result = bot_instance.get_user_bookmarks(access_token, max_count=5)
+    
+    if result[0] is None:
+        return {"error": result[1]}, 400
+    
+    bookmarks, users = result
+    
+    if not bookmarks:
+        return {"message": "No recent bookmarks found"}, 200
+    
+    summary = bot_instance.generate_ai_summary(bookmarks, users)
+    
+    return {
+        "bookmarks_count": len(bookmarks),
+        "summary": summary
+    }, 200
 
 if __name__ == "__main__":
-    main()
+    # For local development only
+    app.run(host='0.0.0.0', port=5000, debug=True)
