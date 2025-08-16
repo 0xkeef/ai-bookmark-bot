@@ -26,10 +26,10 @@ class SimpleBot:
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command"""
         await update.message.reply_text(
-            "🤖 **AI Bookmark Bot**\n\n"
+            "🤖 **AI Bookmark Bot - Fixed Version**\n\n"
             "✅ Bot is running successfully!\n"
             "🌐 Web interface is working\n"
-            "🔧 Currently in setup mode\n\n"
+            "🔧 Port issues resolved\n\n"
             "Bot is alive and responding!",
             parse_mode='Markdown'
         )
@@ -65,21 +65,15 @@ def home():
     port = os.environ.get('PORT', 'unknown')
     return f"""
     <html>
-    <head><title>AI Bookmark Bot</title></head>
+    <head><title>AI Bookmark Bot - Fixed</title></head>
     <body style="font-family: system-ui; text-align: center; padding: 50px; background: #f0f2f5;">
         <h1>🤖 AI Bookmark Bot</h1>
-        <p style="color: green; font-size: 18px;">✅ Status: ACTIVE</p>
-        <p>Bot is running successfully!</p>
-        <p><small>Running on port: {port}</small></p>
+        <p style="color: green; font-size: 18px;">✅ Status: FIXED & ACTIVE</p>
+        <p>Port issues resolved!</p>
+        <p><small>Railway Port: {port}</small></p>
         <hr>
-        <p><strong>Next Steps:</strong></p>
-        <ol style="text-align: left; max-width: 400px; margin: 0 auto;">
-            <li>Test bot with /start command in Telegram</li>
-            <li>Verify all environment variables are set</li>
-            <li>Add Twitter OAuth functionality</li>
-        </ol>
-        <hr>
-        <p><a href="https://t.me/YourBotUsername" target="_blank">Open Telegram Bot →</a></p>
+        <p><strong>This is the corrected version!</strong></p>
+        <p><a href="https://t.me/YourBotUsername" target="_blank">Test Bot →</a></p>
     </body>
     </html>
     """
@@ -88,9 +82,8 @@ def home():
 def health():
     return {
         "status": "healthy", 
-        "bot": "running",
+        "version": "fixed",
         "port": os.environ.get('PORT', 'unknown'),
-        "domain": bot.domain,
         "telegram_configured": bool(bot.telegram_token)
     }
 
@@ -102,20 +95,10 @@ def start_telegram_bot():
     except Exception as e:
         logger.error(f"❌ Telegram bot thread error: {e}")
 
-# Start Telegram bot in background (for both dev and production)
-logger.info("🎯 Initializing Telegram bot thread...")
+# Initialize bot for production (Gunicorn)
+logger.info("🎯 Initializing for Gunicorn...")
 bot_thread = threading.Thread(target=start_telegram_bot, daemon=True)
 bot_thread.start()
+logger.info("✅ Bot thread started for production!")
 
-if __name__ == "__main__":
-    # Local development only
-    port = int(os.environ.get('PORT', 5000))
-    logger.info(f"🚀 Starting Flask in development mode on port {port}")
-    app.run(host='0.0.0.0', port=port, debug=False)
-else:
-    # Production (Gunicorn handles the port)
-    logger.info("🚀 Flask app ready for Gunicorn!")
-    port = os.environ.get('PORT', 'Railway-assigned')
-    logger.info(f"🌐 Will run on port: {port}")
-
-# This ensures the app is avai
+# Note: No app.run() here - Gunicorn handles serving the app
