@@ -378,60 +378,9 @@ Format as a helpful briefing."""
         # Start polling
         app.run_polling(allowed_updates=Update.ALL_TYPES)
 
-        def main():
-        # Create Flask app at module level for Gunicorn
-flask_app = Flask(__name__)
-bot_instance = None
-
-@flask_app.route('/')
-def home():
-    return """
-    <html>
-    <head><title>AI Bookmark Bot</title></head>
-    <body style="font-family: system-ui; text-align: center; padding: 50px;">
-        <h1>🤖 AI Bookmark Summarizer</h1>
-        <p>Get smart summaries of your Twitter bookmarks!</p>
-        <p><a href="https://t.me/YourBotUsername">Start on Telegram →</a></p>
-    </body>
-    </html>
-    """
 def main():
     bot = ProductionBookmarkBot()
     bot.start_bot()
 
-# For Gunicorn - simplified approach
 if __name__ == "__main__":
     main()
-else:
-    # When imported by Gunicorn, create a minimal Flask app
-    from flask import Flask
-    
-    app = Flask(__name__)
-    
-    @app.route('/')
-    def home():
-        return """
-        <html>
-        <head><title>AI Bookmark Bot</title></head>
-        <body style="font-family: system-ui; text-align: center; padding: 50px;">
-            <h1>🤖 AI Bookmark Summarizer</h1>
-            <p>Get smart summaries of your Twitter bookmarks!</p>
-            <p><a href="https://t.me/YourBotUsername">Start on Telegram →</a></p>
-        </body>
-        </html>
-        """
-    
-    @app.route('/health')
-    def health():
-        return {"status": "ok"}
-    
-    # Initialize bot in background
-    import threading
-    bot = ProductionBookmarkBot()
-    
-    # Start bot in separate thread
-    def start_bot_thread():
-        bot.start_bot()
-    
-    bot_thread = threading.Thread(target=start_bot_thread, daemon=True)
-    bot_thread.start()
