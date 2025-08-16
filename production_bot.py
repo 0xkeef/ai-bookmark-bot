@@ -350,11 +350,16 @@ def oauth_callback():
             'created_at': datetime.utcnow().isoformat()
         }
         
-        # Send success message to user
-        asyncio.create_task(bot_instance.send_telegram_message(telegram_user_id, 
-            "✅ Twitter connected successfully!\n\n"
-            "🎉 You're all set! Use /bookmarks to get AI summaries of your bookmarks."
-        ))
+        # Send success message to user (using requests instead of asyncio for simplicity)
+        try:
+            url = f"https://api.telegram.org/bot{bot_instance.telegram_token}/sendMessage"
+            data = {
+                'chat_id': telegram_user_id,
+                'text': "✅ Twitter connected successfully!\n\n🎉 You're all set! Use /bookmarks to get AI summaries of your bookmarks."
+            }
+            requests.post(url, json=data)
+        except Exception as e:
+            logger.error(f"Failed to send success message: {e}")
         
         # Cleanup
         del bot_instance.pending_auth[session_id]
@@ -380,7 +385,12 @@ def main():
 # Start Telegram bot in background when imported by Gunicorn
 if __name__ != "__main__":
     import threading
+    import asyncio
+    
     def start_bot():
+        # Create new event loop for this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         bot_instance.start_bot()
     
     threading.Thread(target=start_bot, daemon=True).start()
