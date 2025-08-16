@@ -4,10 +4,14 @@ import hashlib
 import base64
 import secrets
 import json
+import asyncio
+import threading
 import uuid
 from datetime import datetime, timedelta
 from urllib.parse import parse_qs, urlparse, urlencode
 from dotenv import load_dotenv
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, ContextTypes
 from flask import Flask, request, redirect
 import logging
 
@@ -17,17 +21,18 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-# Create Flask app at module level for Gunicorn
-app = Flask(__name__)
-
 class ProductionBookmarkBot:
     def __init__(self):
-        # Bot credentials
+        # Bot credentials (yours)
         self.telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
+        self.telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
+        # DEBUG: Print environment variables
+        print(f"DEBUG: TELEGRAM_BOT_TOKEN = {self.telegram_token}")
+        print(f"DEBUG: Available env vars: {list(os.environ.keys())}")
         self.client_id = os.getenv('X_CLIENT_ID') 
         self.client_secret = os.getenv('X_CLIENT_SECRET')
         self.anthropic_api_key = os.getenv('ANTHROPIC_API_KEY')
-        self.domain = os.getenv('BOT_DOMAIN', 'https://your-app.railway.app')
+        self.domain = os.getenv('BOT_DOMAIN', 'https://your-app.railway.app')  # Will be your deployed URL
         
         # User data storage
         self.pending_auth = {}  # {session_id: telegram_user_id}
@@ -35,6 +40,109 @@ class ProductionBookmarkBot:
         
         # Session for API calls
         self.session = requests.Session()
+        
+        # Start Flask web server for OAuth
+        self.start_web_server()
+    
+    def start_web_server(self):
+        """Start Flask server for OAuth callbacks"""
+        app = Flask(__name__)
+        
+        @app.route('/')
+        def home():
+            return """
+            <h1>🤖 AI Bookmark Summarizer Bot</h1>
+            <p>Get smart summaries of your Twitter bookmarks!</p>
+            <p><a href="https://t.me/YourBotUsername">Start on Telegram →</a></p>
+            """
+        
+        @app.route('/auth/<user_id>')
+        def start_auth(user_id):
+            """Initiate OAuth for specific user"""
+            session_id = str(uuid.uuid4())
+            self.pending_auth[session_id] = user_id
+            
+            # Generate PKCE parameters for security
+            code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode('utf-8').rstrip('=')
+            code_challenge = base64.urlsafe_b64encode(
+                hashlib.sha256(code_verifier.encode('utf-8')).digest()
+            ).decode('utf-8').rstrip('=')
+            
+            # Store verifier for this session
+            self.pending_auth[session_id + '_verifier'] = code_verifier
+            
+            auth_params = {
+                'response_type': 'code',
+                'client_id': self.client_id,
+                'redirect_uri': f"{self.domain}/callback",
+                'scope': 'tweet.read users.read bookmark.read offline.access',
+                'state': session_id,
+                'code_challenge': code_challenge,
+                'code_challenge_method': 'S256'
+            }
+            
+            auth_url = f"https://twitter.com/i/oauth2/authorize?{urlencode(auth_params)}"
+            return redirect(auth_url)
+        
+        @app.route('/callback')
+        def oauth_callback():
+            """Handle Twitter OAuth callback"""
+            auth_code = request.args.get('code')
+            session_id = request.args.get('state')
+            error = request.args.get('error')
+            
+            if error:
+                return f"❌ Authentication failed: {error}"
+            
+            if not auth_code or session_id not in self.pending_auth:
+                return "❌ Invalid authentication session"
+            
+            telegram_user_id = self.pending_auth[session_id]
+            code_verifier = self.pending_auth.get(session_id + '_verifier')
+            
+            # Exchange code for tokens
+            tokens = self.exchange_code_for_tokens(auth_code, code_verifier)
+            
+            if tokens:
+                # Store tokens for this user
+                self.user_tokens[telegram_user_id] = {
+                    'access_token': tokens.get('access_token'),
+                    'refresh_token': tokens.get('refresh_token'),
+                    'expires_at': (datetime.utcnow() + timedelta(seconds=tokens.get('expires_in', 7200))).isoformat(),
+                    'created_at': datetime.utcnow().isoformat()
+                }
+                
+                # Send success message to user
+                asyncio.create_task(self.send_telegram_message(telegram_user_id, 
+                    "✅ Twitter connected successfully!\n\n"
+                    "🎉 You're all set! Use /bookmarks to get AI summaries of your bookmarks."
+                ))
+                
+                # Cleanup
+                del self.pending_auth[session_id]
+                if session_id + '_verifier' in self.pending_auth:
+                    del self.pending_auth[session_id + '_verifier']
+                
+                return """
+                <html>
+                <head><title>Success!</title></head>
+                <body style="font-family: system-ui; text-align: center; padding: 50px;">
+                    <h1>✅ Connected Successfully!</h1>
+                    <p>Go back to Telegram and use <code>/bookmarks</code></p>
+                    <script>window.close();</script>
+                </body>
+                </html>
+                """
+            else:
+                return "❌ Failed to exchange authorization code"
+        
+        # Run Flask in background thread
+        port = int(os.environ.get('PORT', 5000))
+        threading.Thread(
+            target=lambda: app.run(host='0.0.0.0', port=port, debug=False), 
+            daemon=True
+        ).start()
+        logger.info(f"🌐 Web server started on port {port}")
     
     def exchange_code_for_tokens(self, auth_code, code_verifier):
         """Exchange authorization code for access tokens"""
@@ -63,13 +171,14 @@ class ProductionBookmarkBot:
             logger.error(f"Token exchange error: {e}")
             return None
     
-    def send_telegram_message(self, user_id, message):
-        """Send message to specific user (synchronous)"""
+    async def send_telegram_message(self, user_id, message):
+        """Send message to specific user"""
         try:
             url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
             data = {
                 'chat_id': user_id,
-                'text': message
+                'text': message,
+                'parse_mode': 'Markdown'
             }
             response = requests.post(url, json=data)
             return response.status_code == 200
@@ -166,129 +275,112 @@ Format as a helpful briefing."""
         except Exception as e:
             logger.warning(f"Anthropic API error: {e}")
             return "📚 Recent bookmarks found, but AI summary unavailable."
-
-# Create bot instance at module level
-bot_instance = ProductionBookmarkBot()
-
-# Flask routes that connect to the bot instance
-@app.route('/')
-def home():
-    return """
-    <html>
-    <head><title>AI Bookmark Bot</title></head>
-    <body style="font-family: system-ui; text-align: center; padding: 50px;">
-        <h1>🤖 AI Bookmark Summarizer</h1>
-        <p>Get smart summaries of your Twitter bookmarks!</p>
-        <p><a href="https://t.me/YourBotUsername">Start on Telegram →</a></p>
-    </body>
-    </html>
-    """
-
-@app.route('/auth/<user_id>')
-def start_auth(user_id):
-    """Initiate OAuth for specific user"""
-    session_id = str(uuid.uuid4())
-    bot_instance.pending_auth[session_id] = user_id
     
-    # Generate PKCE parameters for security
-    code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode('utf-8').rstrip('=')
-    code_challenge = base64.urlsafe_b64encode(
-        hashlib.sha256(code_verifier.encode('utf-8')).digest()
-    ).decode('utf-8').rstrip('=')
-    
-    # Store verifier for this session
-    bot_instance.pending_auth[session_id + '_verifier'] = code_verifier
-    
-    auth_params = {
-        'response_type': 'code',
-        'client_id': bot_instance.client_id,
-        'redirect_uri': f"{bot_instance.domain}/callback",
-        'scope': 'tweet.read users.read bookmark.read offline.access',
-        'state': session_id,
-        'code_challenge': code_challenge,
-        'code_challenge_method': 'S256'
-    }
-    
-    auth_url = f"https://twitter.com/i/oauth2/authorize?{urlencode(auth_params)}"
-    return redirect(auth_url)
-
-@app.route('/callback')
-def oauth_callback():
-    """Handle Twitter OAuth callback"""
-    auth_code = request.args.get('code')
-    session_id = request.args.get('state')
-    error = request.args.get('error')
-    
-    if error:
-        return f"❌ Authentication failed: {error}"
-    
-    if not auth_code or session_id not in bot_instance.pending_auth:
-        return "❌ Invalid authentication session"
-    
-    telegram_user_id = bot_instance.pending_auth[session_id]
-    code_verifier = bot_instance.pending_auth.get(session_id + '_verifier')
-    
-    # Exchange code for tokens
-    tokens = bot_instance.exchange_code_for_tokens(auth_code, code_verifier)
-    
-    if tokens:
-        # Store tokens for this user
-        bot_instance.user_tokens[telegram_user_id] = {
-            'access_token': tokens.get('access_token'),
-            'refresh_token': tokens.get('refresh_token'),
-            'expires_at': (datetime.utcnow() + timedelta(seconds=tokens.get('expires_in', 7200))).isoformat(),
-            'created_at': datetime.utcnow().isoformat()
-        }
+    async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /start command"""
+        user_id = update.effective_user.id
         
-        # Send success message to user
-        bot_instance.send_telegram_message(telegram_user_id, 
-            "✅ Twitter connected successfully!\n\n🎉 You're all set! Use /bookmarks to get AI summaries of your bookmarks."
+        if user_id in self.user_tokens:
+            # User already connected
+            await update.message.reply_text(
+                "🎉 You're already connected!\n\n"
+                "📚 Use /bookmarks to get AI summaries\n"
+                "🔄 Use /disconnect to unlink your account"
+            )
+            return
+        
+        # Show connect button
+        connect_url = f"{self.domain}/auth/{user_id}"
+        keyboard = [[InlineKeyboardButton("🔗 Connect Twitter", url=connect_url)]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            "🤖 **AI Bookmark Summarizer**\n\n"
+            "📚 Get smart summaries of your Twitter bookmarks\n"
+            "🧠 Powered by Claude AI\n"
+            "⚡ Instant analysis of your saved tweets\n\n"
+            "👆 Click below to connect your Twitter account\n"
+            "🔒 Secure OAuth - takes 10 seconds",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
         )
+    
+    async def bookmarks_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /bookmarks command"""
+        user_id = update.effective_user.id
         
-        # Cleanup
-        del bot_instance.pending_auth[session_id]
-        if session_id + '_verifier' in bot_instance.pending_auth:
-            del bot_instance.pending_auth[session_id + '_verifier']
+        if user_id not in self.user_tokens:
+            await self.start_command(update, context)
+            return
         
-        return """
-        <html>
-        <head><title>Success!</title></head>
-        <body style="font-family: system-ui; text-align: center; padding: 50px;">
-            <h1>✅ Connected Successfully!</h1>
-            <p>Go back to Telegram and use <code>/bookmarks</code></p>
-            <script>window.close();</script>
-        </body>
-        </html>
-        """
-    else:
-        return "❌ Failed to exchange authorization code"
+        await update.message.reply_text("📚 Fetching your recent bookmarks...")
+        
+        # Get user's tokens
+        user_data = self.user_tokens[user_id]
+        access_token = user_data['access_token']
+        
+        # Fetch bookmarks
+        result = self.get_user_bookmarks(access_token, max_count=5)
+        
+        if result[0] is None:
+            await update.message.reply_text(f"❌ {result[1]}")
+            return
+        
+        bookmarks, users = result
+        
+        if not bookmarks:
+            await update.message.reply_text("📚 No recent bookmarks found!")
+            return
+        
+        # Generate AI summary
+        summary = self.generate_ai_summary(bookmarks, users)
+        
+        # Send results
+        await update.message.reply_text(
+            f"📚 **Your Recent Bookmarks ({len(bookmarks)} found)**\n\n"
+            f"🤖 **AI Summary:**\n{summary}",
+            parse_mode='Markdown'
+        )
+    
+    async def disconnect_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /disconnect command"""
+        user_id = update.effective_user.id
+        
+        if user_id in self.user_tokens:
+            del self.user_tokens[user_id]
+            await update.message.reply_text(
+                "🔓 Disconnected successfully!\n\n"
+                "Use /start to reconnect anytime"
+            )
+        else:
+            await update.message.reply_text("❌ You're not connected")
+    
+    def start_bot(self):
+        """Start the Telegram bot"""
+        if not self.telegram_token:
+            logger.error("Missing TELEGRAM_BOT_TOKEN")
+            return
+        
+        logger.info("🤖 Starting Production Bookmark Bot...")
+        
+        # Create application
+        app = Application.builder().token(self.telegram_token).build()
+        
+        # Add handlers
+        app.add_handler(CommandHandler("start", self.start_command))
+        app.add_handler(CommandHandler("bookmarks", self.bookmarks_command))
+        app.add_handler(CommandHandler("disconnect", self.disconnect_command))
+        
+        logger.info("✅ Bot started successfully!")
+        logger.info(f"🌐 Web server: {self.domain}")
+        logger.info(f"🧠 AI: {'✅ Enabled' if self.anthropic_api_key else '❌ Disabled'}")
+        
+        # Start polling
+        app.run_polling(allowed_updates=Update.ALL_TYPES)
 
-@app.route('/bookmarks/<user_id>')
-def get_bookmarks_api(user_id):
-    """API endpoint for getting bookmarks (for webhook-based bot)"""
-    if user_id not in bot_instance.user_tokens:
-        return {"error": "User not authenticated"}, 401
-    
-    user_data = bot_instance.user_tokens[user_id]
-    access_token = user_data['access_token']
-    
-    result = bot_instance.get_user_bookmarks(access_token, max_count=5)
-    
-    if result[0] is None:
-        return {"error": result[1]}, 400
-    
-    bookmarks, users = result
-    
-    if not bookmarks:
-        return {"message": "No recent bookmarks found"}, 200
-    
-    summary = bot_instance.generate_ai_summary(bookmarks, users)
-    
-    return {
-        "bookmarks_count": len(bookmarks),
-        "summary": summary
-    }, 200
+def main():
+    bot = ProductionBookmarkBot()
+    bot.start_bot()
 
 if __name__ == "__main__":
-    # For local development only
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    main()
