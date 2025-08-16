@@ -25,6 +25,10 @@ class ProductionBookmarkBot:
     def __init__(self):
         # Bot credentials (yours)
         self.telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
+        self.telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
+# DEBUG: Print environment variables
+print(f"DEBUG: TELEGRAM_BOT_TOKEN = {self.telegram_token}")
+print(f"DEBUG: Available env vars: {list(os.environ.keys())}")
         self.client_id = os.getenv('X_CLIENT_ID') 
         self.client_secret = os.getenv('X_CLIENT_SECRET')
         self.anthropic_api_key = os.getenv('ANTHROPIC_API_KEY')
