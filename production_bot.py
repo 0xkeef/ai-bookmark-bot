@@ -384,3 +384,12 @@ def main():
 
 if __name__ == "__main__":
     main()
+if __name__ == "__main__":
+    main()
+
+# For Gunicorn - create Flask app at module level
+from flask import Flask
+
+# Create the bot instance to get the Flask app
+bot_instance = ProductionBookmarkBot()
+# ... rest of the code
